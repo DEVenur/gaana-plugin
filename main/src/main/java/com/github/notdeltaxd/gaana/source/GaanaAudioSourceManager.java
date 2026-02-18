@@ -25,7 +25,7 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private static final Logger log = LoggerFactory.getLogger(GaanaAudioSourceManager.class);
 
-    public static final String SEARCH_PREFIX = "gnasearch:";
+    public static final String SEARCH_PREFIX = "gaanasearch:";
 
     private static final String API_URL = "https://gaana.com/apiv2";
     public static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
