@@ -44,7 +44,7 @@ logging:
 ## Supported URLs and Queries
 
 ### Search
-- `gnasearch:arijit singh` - Search for songs
+- `gaanasearch:arijit singh` - Search for songs
 
 ### Direct URLs
 - `https://gaana.com/song/apna-bana-le-piya` - Single song
