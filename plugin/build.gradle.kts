@@ -8,8 +8,10 @@ plugins {
 
 val pluginVersion = findProperty("version") as String?
 val commitSha = System.getenv("GITHUB_SHA")?.take(7) ?: "unknown"
-val preRelease = System.getenv("PRERELEASE") == "true"
-val verName = if (preRelease) commitSha else pluginVersion!!
+val isTag = System.getenv("GITHUB_REF_TYPE") == "tag"
+val tagVersion = System.getenv("GITHUB_REF_NAME")?.removePrefix("v")
+val preRelease = System.getenv("PRERELEASE") == "true" || !isTag
+val verName = if (isTag && tagVersion != null) tagVersion else if (preRelease) commitSha else pluginVersion!!
 
 group = "com.github.notdeltaxd"
 version = verName
@@ -81,10 +83,12 @@ githubRelease {
     owner("notdeltaxd")
     repo("gaana-plugin")
     targetCommitish(System.getenv("RELEASE_TARGET"))
-    releaseAssets(tasks.shadowJar.get().outputs.files.toList())
+    val assets = tasks.shadowJar.get().outputs.files.toList()
+    println("Release Assets: $assets")
+    releaseAssets(assets)
     tagName("$verName")
     releaseName(verName)
-    overwrite(false)
+    overwrite(true)
     prerelease(preRelease)
 
     if (preRelease) {
