@@ -11,7 +11,7 @@ server: # REST and WS server
 lavalink:
   plugins:
   # plugins would go here, but they are auto-loaded when developing
-  #  - dependency: "com.github.appujet:gaana-plugin:VERSION"
+  #  - dependency: "com.github.notdeltaxd:gaana-plugin:VERSION"
   #    repository: "https://jitpack.io"
   server:
     password: "youshallnotpass"
