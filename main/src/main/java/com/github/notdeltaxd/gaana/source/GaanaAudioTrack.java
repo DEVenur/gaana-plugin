@@ -143,17 +143,20 @@ public class GaanaAudioTrack extends DelegatedAudioTrack {
 
     private String decryptStreamPath(String encryptedData) {
         try {
+            // charAt(0) is the digit itself (1 char), then `offset` random chars, then 16-char salt
+            // So real base64 starts at: 1 (digit) + offset (random) + 16 (salt)
             int offset = Character.digit(encryptedData.charAt(0), 10);
             if (offset < 0) return null;
 
-            String base64Data = encryptedData.substring(offset + 16);
+            String base64Data = encryptedData.substring(1 + offset + 16);
             int paddingNeeded = (4 - base64Data.length() % 4) % 4;
             for (int i = 0; i < paddingNeeded; i++) {
                 base64Data += "=";
             }
 
             byte[] ciphertext = Base64.getMimeDecoder().decode(base64Data);
-            Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
+            // Fix: use PKCS5Padding — Gaana pads with PKCS#7; NoPadding leaves garbage bytes
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             cipher.init(Cipher.DECRYPT_MODE,
                 new SecretKeySpec(CRYPTO_KEY.getBytes(StandardCharsets.UTF_8), "AES"),
                 new IvParameterSpec(CRYPTO_IV.getBytes(StandardCharsets.UTF_8)));
