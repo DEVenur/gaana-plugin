@@ -73,10 +73,12 @@ public class GaanaSegmentFetcher {
             }
 
             byte[] mapData = readBytes(response.getEntity().getContent());
-            if (keyInfo != null && keyInfo.iv != null && mapData.length % 16 == 0) {
+            // Fix: decrypt even when IV is absent — derive IV from sequence 0 (all zeros)
+            if (keyInfo != null && !"NONE".equals(keyInfo.method) && mapData.length % 16 == 0) {
                 byte[] key = fetchKey(keyInfo);
                 if (key != null) {
-                    mapData = decrypt(mapData, key, keyInfo.iv);
+                    byte[] iv = keyInfo.iv != null ? keyInfo.iv : deriveIvFromSequence(0);
+                    mapData = decrypt(mapData, key, iv);
                 }
             }
             return mapData;
