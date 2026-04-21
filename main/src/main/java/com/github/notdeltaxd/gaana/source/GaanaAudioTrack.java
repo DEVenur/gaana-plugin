@@ -12,29 +12,17 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrackInfo;
 import com.sedmelluq.discord.lavaplayer.track.DelegatedAudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.playback.LocalAudioTrackExecutor;
 import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.ContentType;
-import org.apache.http.entity.StringEntity;
+import org.apache.http.client.methods.HttpGet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 
 public class GaanaAudioTrack extends DelegatedAudioTrack {
 
     private static final Logger log = LoggerFactory.getLogger(GaanaAudioTrack.class);
-
-    private static final String STREAM_API = "https://gaana.com/api/stream-url";
-    private static final String HLS_BASE_URL = "https://vodhlsgaana-ebw.akamaized.net/";
-    private static final String CRYPTO_KEY = new String(Base64.getDecoder().decode("Z3kxdCNiQGpsKGIkd3RtZQ=="), StandardCharsets.UTF_8);
-    private static final String CRYPTO_IV = new String(Base64.getDecoder().decode("eEM0ZG1WSkFxMTRCZm50WA=="), StandardCharsets.UTF_8);
 
     private final GaanaAudioSourceManager sourceManager;
     private volatile GaanaHlsInputStream hlsStream;
@@ -110,70 +98,47 @@ public class GaanaAudioTrack extends DelegatedAudioTrack {
         }
     }
 
+    /**
+     * Fetches the HLS stream URL via GaanaPy API.
+     * GaanaPy returns the stream URL directly - no decryption needed.
+     *
+     * Endpoint: GET {apiUrl}/songs/info?seokey={seokey}
+     * Uses field: stream_urls.urls.high_quality
+     */
     private String fetchStreamUrl(HttpInterface httpInterface, String trackId) throws IOException {
-        HttpPost request = new HttpPost(STREAM_API);
-        request.setHeader("User-Agent", GaanaAudioSourceManager.USER_AGENT);
-        request.setHeader("Accept", "application/json");
-        request.setHeader("Origin", "https://gaana.com");
-        request.setHeader("Referer", "https://gaana.com/");
-        request.setHeader("Content-Type", "application/x-www-form-urlencoded");
+        String apiUrl = sourceManager.getApiUrl();
+        String url = apiUrl + "/songs/info?seokey=" + URLEncoder.encode(trackId, "UTF-8");
 
-        String requestBody = "quality=high&track_id=" + URLEncoder.encode(trackId, "UTF-8") + "&stream_format=mp4";
-        request.setEntity(new StringEntity(requestBody, ContentType.APPLICATION_FORM_URLENCODED));
+        log.debug("Fetching stream from GaanaPy: {}", url);
+
+        HttpGet request = new HttpGet(url);
+        request.setHeader("Accept", "application/json");
 
         try (CloseableHttpResponse response = httpInterface.execute(request)) {
+            int statusCode = response.getStatusLine().getStatusCode();
+            if (statusCode != 200) {
+                throw new IOException("GaanaPy returned HTTP " + statusCode + " for: " + trackId);
+            }
+
+            // GaanaPy returns a JSON array — pick first element
             JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
+            JsonBrowser first = json.index(0);
 
-            if (!"success".equals(json.get("api_status").text())) {
-                throw new IOException("Stream API error: " + json.get("api_status").text());
+            if (first.isNull()) {
+                throw new IOException("GaanaPy returned empty array for: " + trackId);
             }
 
-            String encryptedPath = json.get("data").get("stream_path").text();
-            if (encryptedPath == null || encryptedPath.isEmpty()) {
-                throw new IOException("No stream path returned");
+            // Try qualities in order: high > very_high > medium > low
+            String[] qualities = {"high_quality", "very_high_quality", "medium_quality", "low_quality"};
+            for (String quality : qualities) {
+                String streamUrl = first.get("stream_urls").get("urls").get(quality).text();
+                if (streamUrl != null && !streamUrl.isEmpty()) {
+                    log.debug("Using quality '{}': {}", quality, streamUrl);
+                    return streamUrl;
+                }
             }
 
-            String hlsUrl = decryptStreamPath(encryptedPath);
-            if (hlsUrl == null) {
-                throw new IOException("Failed to decrypt stream path");
-            }
-            return hlsUrl;
-        }
-    }
-
-    private String decryptStreamPath(String encryptedData) {
-        try {
-            // charAt(0) is the digit itself (1 char), then `offset` random chars, then 16-char salt
-            // So real base64 starts at: 1 (digit) + offset (random) + 16 (salt)
-            int offset = Character.digit(encryptedData.charAt(0), 10);
-            if (offset < 0) return null;
-
-            String base64Data = encryptedData.substring(1 + offset + 16);
-            int paddingNeeded = (4 - base64Data.length() % 4) % 4;
-            for (int i = 0; i < paddingNeeded; i++) {
-                base64Data += "=";
-            }
-
-            byte[] ciphertext = Base64.getMimeDecoder().decode(base64Data);
-            // Fix: use PKCS5Padding — Gaana pads with PKCS#7; NoPadding leaves garbage bytes
-            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            cipher.init(Cipher.DECRYPT_MODE,
-                new SecretKeySpec(CRYPTO_KEY.getBytes(StandardCharsets.UTF_8), "AES"),
-                new IvParameterSpec(CRYPTO_IV.getBytes(StandardCharsets.UTF_8)));
-
-            String decrypted = new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
-
-            StringBuilder cleaned = new StringBuilder();
-            for (char c : decrypted.toCharArray()) {
-                if (c >= 32 && c <= 126) cleaned.append(c);
-            }
-            decrypted = cleaned.toString().trim();
-
-            int hlsIndex = decrypted.indexOf("hls/");
-            return hlsIndex >= 0 ? HLS_BASE_URL + decrypted.substring(hlsIndex) : null;
-        } catch (Exception e) {
-            log.error("Decrypt error: {}", e.getMessage());
-            return null;
+            throw new IOException("No stream URL found in GaanaPy response for: " + trackId);
         }
     }
 
