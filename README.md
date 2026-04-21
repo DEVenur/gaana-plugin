@@ -76,7 +76,10 @@ lavalink:
 
 plugins:
   gaana:
-    searchLimit: 20
+    apiUrl: "https://your-app.leapcell.io" # WIP
+    searchLimit: 20 # Maximum number of search results (default 20)
+    playlistTrackLimit: 50 # Maximum number of tracks in the playlist/album (default 50)
+    recommendationsTrackLimit: 10 # Maximum number of tracks by artist (default 10)
 
 logging:
   level:
