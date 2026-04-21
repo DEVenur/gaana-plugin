@@ -10,15 +10,26 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class GaanaPlugin implements AudioPlayerManagerConfiguration {
+
     private static final Logger log = LoggerFactory.getLogger(GaanaPlugin.class);
 
     private final GaanaSourceConfig config;
     private final GaanaAudioSourceManager gaanaSourceManager;
 
     public GaanaPlugin(GaanaSourceConfig config) {
-        log.info("Loaded Gaana plugin...");
         this.config = config;
-        this.gaanaSourceManager = new GaanaAudioSourceManager(this.config.getSearchLimit());
+        log.info("Loaded Gaana plugin (apiUrl: {}, searchLimit: {}, playlistTrackLimit: {}, recommendationsTrackLimit: {})",
+            config.getApiUrl(),
+            config.getSearchLimit(),
+            config.getPlaylistTrackLimit(),
+            config.getRecommendationsTrackLimit()
+        );
+        this.gaanaSourceManager = new GaanaAudioSourceManager(
+            config.getSearchLimit(),
+            config.getPlaylistTrackLimit(),
+            config.getRecommendationsTrackLimit(),
+            config.getApiUrl()
+        );
     }
 
     @NotNull
