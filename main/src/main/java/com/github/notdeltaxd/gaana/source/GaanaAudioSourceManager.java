@@ -116,7 +116,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private AudioItem search(String query) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            String url = apiUrl + "/songs/search?query=" + URLEncoder.encode(query, "UTF-8")
+            // Trailing slash required — FastAPI redirects without it (307)
+            String url = apiUrl + "/songs/search/?query=" + URLEncoder.encode(query, "UTF-8")
                 + "&limit=" + searchLimit;
 
             HttpGet request = new HttpGet(url);
@@ -147,7 +148,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private AudioItem loadSong(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            String url = apiUrl + "/songs/info?seokey=" + URLEncoder.encode(seokey, "UTF-8");
+            // Trailing slash required
+            String url = apiUrl + "/songs/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
 
             HttpGet request = new HttpGet(url);
             request.setHeader("Accept", "application/json");
@@ -165,88 +167,47 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
     }
 
     // ── Album ─────────────────────────────────────────────────────────────────
-    // GaanaPy does not have /albums/info — we use /albums/search with the seokey
-    // as query, then filter results that belong to the same album_seokey.
+    // GaanaPy /albums/info/ returns album metadata + tracks inside "tracks" field
 
     private AudioItem loadAlbum(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Convert seokey to a readable query: "the-eminem-show" → "the eminem show"
-            String query = seokey.replaceAll("-", " ");
-            String url = apiUrl + "/albums/search?query=" + URLEncoder.encode(query, "UTF-8")
-                + "&limit=1";
+            // Trailing slash required
+            String url = apiUrl + "/albums/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
 
-            log.debug("Loading album via search: {}", url);
+            log.debug("Loading album: {}", url);
 
             HttpGet request = new HttpGet(url);
             request.setHeader("Accept", "application/json");
 
             try (CloseableHttpResponse response = httpInterface.execute(request)) {
-                if (response.getStatusLine().getStatusCode() != 200) return AudioReference.NO_TRACK;
+                int status = response.getStatusLine().getStatusCode();
+                if (status != 200) {
+                    log.warn("Album info returned HTTP {}", status);
+                    return AudioReference.NO_TRACK;
+                }
 
+                // Response is a list with one album object that has a "tracks" array inside
                 JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
                 if (json.isNull() || json.values().isEmpty()) return AudioReference.NO_TRACK;
 
-                // GaanaPy /albums/search returns album-level results
-                // Each element has tracks inside or we need songs/search filtered by album_seokey
-                // Strategy: get album name from first result, then fetch its tracks via songs/search
-                JsonBrowser firstAlbum = json.index(0);
-                if (firstAlbum.isNull()) return AudioReference.NO_TRACK;
+                JsonBrowser albumObj = json.index(0);
+                if (albumObj.isNull()) return AudioReference.NO_TRACK;
 
-                String albumName = firstAlbum.get("album").text();
-                if (albumName == null) albumName = query;
-                String artworkUrl = firstAlbum.get("images").get("urls").get("large_artwork").text();
-                String albumSeokey = firstAlbum.get("album_seokey").text();
-                if (albumSeokey == null) albumSeokey = seokey;
+                String albumName = albumObj.get("title").text();
+                if (albumName == null) albumName = seokey;
 
-                // Now fetch tracks that belong to this album using songs/search
-                String tracksUrl = apiUrl + "/songs/search?query=" + URLEncoder.encode(albumName, "UTF-8")
-                    + "&limit=" + playlistTrackLimit;
+                String artworkUrl = albumObj.get("images").get("urls").get("large_artwork").text();
 
-                HttpGet tracksRequest = new HttpGet(tracksUrl);
-                tracksRequest.setHeader("Accept", "application/json");
+                // Tracks are inside the album object
+                JsonBrowser tracks = albumObj.get("tracks");
+                if (tracks.isNull() || tracks.values().isEmpty()) return AudioReference.NO_TRACK;
 
                 List<AudioTrack> trackList = new ArrayList<>();
-
-                try (CloseableHttpResponse tracksResponse = httpInterface.execute(tracksRequest)) {
-                    if (tracksResponse.getStatusLine().getStatusCode() == 200) {
-                        JsonBrowser tracksJson = JsonBrowser.parse(tracksResponse.getEntity().getContent());
-                        if (!tracksJson.isNull()) {
-                            final String finalAlbumSeokey = albumSeokey;
-                            for (JsonBrowser item : tracksJson.values()) {
-                                // Only include tracks that belong to this album
-                                String itemAlbumSeokey = item.get("album_seokey").text();
-                                if (finalAlbumSeokey.equals(itemAlbumSeokey)) {
-                                    AudioTrack track = mapGaanaPyTrack(item);
-                                    if (track != null) {
-                                        trackList.add(track);
-                                        if (trackList.size() >= playlistTrackLimit) break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Fallback: if no tracks matched by album_seokey, use all results
-                if (trackList.isEmpty()) {
-                    String fallbackUrl = apiUrl + "/songs/search?query=" + URLEncoder.encode(albumName, "UTF-8")
-                        + "&limit=" + playlistTrackLimit;
-                    HttpGet fallbackRequest = new HttpGet(fallbackUrl);
-                    fallbackRequest.setHeader("Accept", "application/json");
-
-                    try (CloseableHttpResponse fallbackResponse = httpInterface.execute(fallbackRequest)) {
-                        if (fallbackResponse.getStatusLine().getStatusCode() == 200) {
-                            JsonBrowser fallbackJson = JsonBrowser.parse(fallbackResponse.getEntity().getContent());
-                            if (!fallbackJson.isNull()) {
-                                for (JsonBrowser item : fallbackJson.values()) {
-                                    AudioTrack track = mapGaanaPyTrack(item);
-                                    if (track != null) {
-                                        trackList.add(track);
-                                        if (trackList.size() >= playlistTrackLimit) break;
-                                    }
-                                }
-                            }
-                        }
+                for (JsonBrowser item : tracks.values()) {
+                    AudioTrack track = mapGaanaPyTrack(item);
+                    if (track != null) {
+                        trackList.add(track);
+                        if (trackList.size() >= playlistTrackLimit) break;
                     }
                 }
 
@@ -264,7 +225,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private AudioItem loadPlaylist(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            String url = apiUrl + "/playlists/info?seokey=" + URLEncoder.encode(seokey, "UTF-8");
+            // Trailing slash required
+            String url = apiUrl + "/playlists/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
 
             HttpGet request = new HttpGet(url);
             request.setHeader("Accept", "application/json");
@@ -300,42 +262,43 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
     }
 
     // ── Artist ───────────────────────────────────────────────────────────────
+    // GaanaPy /artists/info/ returns artist object with "top_tracks" array inside
 
     private AudioItem loadArtist(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Step 1: get artist name and artwork via /artists/info
-            String infoUrl = apiUrl + "/artists/info?seokey=" + URLEncoder.encode(seokey, "UTF-8");
-            HttpGet infoRequest = new HttpGet(infoUrl);
-            infoRequest.setHeader("Accept", "application/json");
+            // Trailing slash required
+            String url = apiUrl + "/artists/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
 
-            String artistName = seokey.replaceAll("-", " ");
-            String artworkUrl = null;
+            log.debug("Loading artist: {}", url);
 
-            try (CloseableHttpResponse response = httpInterface.execute(infoRequest)) {
-                if (response.getStatusLine().getStatusCode() == 200) {
-                    JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
-                    if (!json.isNull()) {
-                        String name = json.get("name").text();
-                        if (name != null && !name.isEmpty()) artistName = name;
-                        artworkUrl = json.get("image").text();
-                    }
+            HttpGet request = new HttpGet(url);
+            request.setHeader("Accept", "application/json");
+
+            try (CloseableHttpResponse response = httpInterface.execute(request)) {
+                int status = response.getStatusLine().getStatusCode();
+                if (status != 200) {
+                    log.warn("Artist info returned HTTP {}", status);
+                    return AudioReference.NO_TRACK;
                 }
-            }
 
-            // Step 2: search top tracks by artist name
-            String searchUrl = apiUrl + "/songs/search?query=" + URLEncoder.encode(artistName, "UTF-8")
-                + "&limit=" + recommendationsTrackLimit;
-            HttpGet searchRequest = new HttpGet(searchUrl);
-            searchRequest.setHeader("Accept", "application/json");
-
-            try (CloseableHttpResponse response = httpInterface.execute(searchRequest)) {
-                if (response.getStatusLine().getStatusCode() != 200) return AudioReference.NO_TRACK;
-
+                // Response is a list with one artist object that has "top_tracks" inside
                 JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
                 if (json.isNull() || json.values().isEmpty()) return AudioReference.NO_TRACK;
 
+                JsonBrowser artistObj = json.index(0);
+                if (artistObj.isNull()) return AudioReference.NO_TRACK;
+
+                String artistName = artistObj.get("name").text();
+                if (artistName == null) artistName = seokey;
+
+                String artworkUrl = artistObj.get("images").get("urls").get("large_artwork").text();
+
+                // Top tracks are inside the artist object
+                JsonBrowser topTracks = artistObj.get("top_tracks");
+                if (topTracks.isNull() || topTracks.values().isEmpty()) return AudioReference.NO_TRACK;
+
                 List<AudioTrack> trackList = new ArrayList<>();
-                for (JsonBrowser item : json.values()) {
+                for (JsonBrowser item : topTracks.values()) {
                     AudioTrack track = mapGaanaPyTrack(item);
                     if (track != null) {
                         trackList.add(track);
