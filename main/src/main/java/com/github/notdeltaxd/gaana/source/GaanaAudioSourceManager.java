@@ -7,6 +7,7 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterface;
 import com.sedmelluq.discord.lavaplayer.track.*;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.slf4j.Logger;
@@ -38,13 +39,26 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
     private int recommendationsTrackLimit = 10;
     private String apiUrl = "http://localhost:8000";
 
+    // Timeout in ms — 20s to handle Leapcell cold starts
+    private static final int HTTP_TIMEOUT_MS = 20000;
+
+    private void applyTimeout() {
+        configureRequests(config -> RequestConfig.copy(config)
+            .setConnectTimeout(HTTP_TIMEOUT_MS)
+            .setSocketTimeout(HTTP_TIMEOUT_MS)
+            .setConnectionRequestTimeout(HTTP_TIMEOUT_MS)
+            .build());
+    }
+
     public GaanaAudioSourceManager() {
         super();
+        applyTimeout();
     }
 
     public GaanaAudioSourceManager(int searchLimit) {
         super();
         this.searchLimit = searchLimit > 0 ? searchLimit : 20;
+        applyTimeout();
     }
 
     public GaanaAudioSourceManager(int searchLimit, int playlistTrackLimit, int recommendationsTrackLimit, String apiUrl) {
@@ -55,6 +69,7 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
         if (apiUrl != null && !apiUrl.isEmpty()) {
             this.apiUrl = apiUrl.replaceAll("/+$", "");
         }
+        applyTimeout();
     }
 
     public String getApiUrl() {
