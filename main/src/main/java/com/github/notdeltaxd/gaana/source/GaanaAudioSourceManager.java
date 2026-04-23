@@ -2,6 +2,9 @@ package com.github.notdeltaxd.gaana.source;
 
 import com.github.notdeltaxd.gaana.ExtendedAudioPlaylist;
 import com.github.notdeltaxd.gaana.ExtendedAudioSourceManager;
+import com.github.topi314.lavasearch.AudioSearchManager;
+import com.github.topi314.lavasearch.result.AudioSearchResult;
+import com.github.topi314.lavasearch.result.BasicAudioSearchResult;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
@@ -10,6 +13,8 @@ import com.sedmelluq.discord.lavaplayer.track.*;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,10 +24,11 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
+public class GaanaAudioSourceManager extends ExtendedAudioSourceManager implements AudioSearchManager {
 
     private static final Logger log = LoggerFactory.getLogger(GaanaAudioSourceManager.class);
 
@@ -34,12 +40,13 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
         "https?://(?:www\\.)?gaana\\.com/(?<type>song|album|playlist|artist)/(?<identifier>[\\w-]+)"
     );
 
+    public static final Set<AudioSearchResult.Type> SEARCH_TYPES = Set.of(AudioSearchResult.Type.TRACK);
+
     private int searchLimit = 20;
     private int playlistTrackLimit = 50;
     private int recommendationsTrackLimit = 10;
     private String apiUrl = "http://localhost:8000";
 
-    // Timeout in ms — 20s to handle Leapcell cold starts
     private static final int HTTP_TIMEOUT_MS = 20000;
 
     private void applyTimeout() {
@@ -72,9 +79,7 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
         applyTimeout();
     }
 
-    public String getApiUrl() {
-        return apiUrl;
-    }
+    public String getApiUrl() { return apiUrl; }
 
     public void setApiUrl(String apiUrl) {
         if (apiUrl != null && !apiUrl.isEmpty()) {
@@ -82,22 +87,34 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
         }
     }
 
-    public void setSearchLimit(int searchLimit) {
-        this.searchLimit = searchLimit > 0 ? searchLimit : 20;
-    }
-
-    public void setPlaylistTrackLimit(int playlistTrackLimit) {
-        this.playlistTrackLimit = playlistTrackLimit > 0 ? playlistTrackLimit : 50;
-    }
-
-    public void setRecommendationsTrackLimit(int recommendationsTrackLimit) {
-        this.recommendationsTrackLimit = recommendationsTrackLimit > 0 ? recommendationsTrackLimit : 10;
-    }
+    public void setSearchLimit(int searchLimit) { this.searchLimit = searchLimit > 0 ? searchLimit : 20; }
+    public void setPlaylistTrackLimit(int playlistTrackLimit) { this.playlistTrackLimit = playlistTrackLimit > 0 ? playlistTrackLimit : 50; }
+    public void setRecommendationsTrackLimit(int recommendationsTrackLimit) { this.recommendationsTrackLimit = recommendationsTrackLimit > 0 ? recommendationsTrackLimit : 10; }
 
     @Override
-    public String getSourceName() {
-        return "gaana";
+    public String getSourceName() { return "gaana"; }
+
+    // ── LavaSearch ───────────────────────────────────────────────────────────
+
+    @Nullable
+    @Override
+    public AudioSearchResult loadSearch(@NotNull String query, @NotNull Set<AudioSearchResult.Type> types) {
+        if (!query.startsWith(SEARCH_PREFIX)) return null;
+        if (types.isEmpty()) types = SEARCH_TYPES;
+        if (!types.contains(AudioSearchResult.Type.TRACK)) return null;
+        try {
+            AudioItem result = search(query.substring(SEARCH_PREFIX.length()).trim());
+            if (result == AudioReference.NO_TRACK || !(result instanceof AudioPlaylist)) return null;
+            List<AudioTrack> tracks = ((AudioPlaylist) result).getTracks();
+            if (tracks.isEmpty()) return null;
+            return new BasicAudioSearchResult(tracks, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+        } catch (Exception e) {
+            log.error("Gaana LavaSearch failed", e);
+            return null;
+        }
     }
+
+    // ── loadItem ─────────────────────────────────────────────────────────────
 
     @Override
     public AudioItem loadItem(AudioPlayerManager manager, AudioReference reference) {
@@ -131,7 +148,6 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private AudioItem search(String query) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Trailing slash required — FastAPI redirects without it (307)
             String url = apiUrl + "/songs/search/?query=" + URLEncoder.encode(query, "UTF-8")
                 + "&limit=" + searchLimit;
 
@@ -163,7 +179,6 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private AudioItem loadSong(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Trailing slash required
             String url = apiUrl + "/songs/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
 
             HttpGet request = new HttpGet(url);
@@ -182,13 +197,10 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
     }
 
     // ── Album ─────────────────────────────────────────────────────────────────
-    // GaanaPy /albums/info/ returns album metadata + tracks inside "tracks" field
 
     private AudioItem loadAlbum(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Trailing slash required
             String url = apiUrl + "/albums/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
-
             log.debug("Loading album: {}", url);
 
             HttpGet request = new HttpGet(url);
@@ -196,12 +208,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
             try (CloseableHttpResponse response = httpInterface.execute(request)) {
                 int status = response.getStatusLine().getStatusCode();
-                if (status != 200) {
-                    log.warn("Album info returned HTTP {}", status);
-                    return AudioReference.NO_TRACK;
-                }
+                if (status != 200) { log.warn("Album info returned HTTP {}", status); return AudioReference.NO_TRACK; }
 
-                // Response is a list with one album object that has a "tracks" array inside
                 JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
                 if (json.isNull() || json.values().isEmpty()) return AudioReference.NO_TRACK;
 
@@ -213,7 +221,6 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
                 String artworkUrl = albumObj.get("images").get("urls").get("large_artwork").text();
 
-                // Tracks are inside the album object
                 JsonBrowser tracks = albumObj.get("tracks");
                 if (tracks.isNull() || tracks.values().isEmpty()) return AudioReference.NO_TRACK;
 
@@ -227,11 +234,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
                 }
 
                 if (trackList.isEmpty()) return AudioReference.NO_TRACK;
-
-                return new GaanaAudioPlaylist(albumName, trackList,
-                    ExtendedAudioPlaylist.Type.ALBUM,
-                    "https://gaana.com/album/" + seokey,
-                    artworkUrl, null, trackList.size());
+                return new GaanaAudioPlaylist(albumName, trackList, ExtendedAudioPlaylist.Type.ALBUM,
+                    "https://gaana.com/album/" + seokey, artworkUrl, null, trackList.size());
             }
         }
     }
@@ -240,7 +244,6 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
     private AudioItem loadPlaylist(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Trailing slash required
             String url = apiUrl + "/playlists/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
 
             HttpGet request = new HttpGet(url);
@@ -256,9 +259,7 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
                 String artworkUrl = null;
 
                 for (JsonBrowser item : json.values()) {
-                    if (artworkUrl == null) {
-                        artworkUrl = item.get("images").get("urls").get("large_artwork").text();
-                    }
+                    if (artworkUrl == null) artworkUrl = item.get("images").get("urls").get("large_artwork").text();
                     AudioTrack track = mapGaanaPyTrack(item);
                     if (track != null) {
                         trackList.add(track);
@@ -267,23 +268,17 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
                 }
 
                 if (trackList.isEmpty()) return AudioReference.NO_TRACK;
-
-                return new GaanaAudioPlaylist(seokey, trackList,
-                    ExtendedAudioPlaylist.Type.PLAYLIST,
-                    "https://gaana.com/playlist/" + seokey,
-                    artworkUrl, null, trackList.size());
+                return new GaanaAudioPlaylist(seokey, trackList, ExtendedAudioPlaylist.Type.PLAYLIST,
+                    "https://gaana.com/playlist/" + seokey, artworkUrl, null, trackList.size());
             }
         }
     }
 
     // ── Artist ───────────────────────────────────────────────────────────────
-    // GaanaPy /artists/info/ returns artist object with "top_tracks" array inside
 
     private AudioItem loadArtist(String seokey) throws IOException {
         try (HttpInterface httpInterface = getHttpInterface()) {
-            // Trailing slash required
             String url = apiUrl + "/artists/info/?seokey=" + URLEncoder.encode(seokey, "UTF-8");
-
             log.debug("Loading artist: {}", url);
 
             HttpGet request = new HttpGet(url);
@@ -291,12 +286,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
             try (CloseableHttpResponse response = httpInterface.execute(request)) {
                 int status = response.getStatusLine().getStatusCode();
-                if (status != 200) {
-                    log.warn("Artist info returned HTTP {}", status);
-                    return AudioReference.NO_TRACK;
-                }
+                if (status != 200) { log.warn("Artist info returned HTTP {}", status); return AudioReference.NO_TRACK; }
 
-                // Response is a list with one artist object that has "top_tracks" inside
                 JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
                 if (json.isNull() || json.values().isEmpty()) return AudioReference.NO_TRACK;
 
@@ -308,7 +299,6 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
 
                 String artworkUrl = artistObj.get("images").get("urls").get("large_artwork").text();
 
-                // Top tracks are inside the artist object
                 JsonBrowser topTracks = artistObj.get("top_tracks");
                 if (topTracks.isNull() || topTracks.values().isEmpty()) return AudioReference.NO_TRACK;
 
@@ -322,11 +312,8 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
                 }
 
                 if (trackList.isEmpty()) return AudioReference.NO_TRACK;
-
-                return new GaanaAudioPlaylist(artistName + "'s Top Tracks", trackList,
-                    ExtendedAudioPlaylist.Type.ARTIST,
-                    "https://gaana.com/artist/" + seokey,
-                    artworkUrl, artistName, trackList.size());
+                return new GaanaAudioPlaylist(artistName + "'s Top Tracks", trackList, ExtendedAudioPlaylist.Type.ARTIST,
+                    "https://gaana.com/artist/" + seokey, artworkUrl, artistName, trackList.size());
             }
         }
     }
@@ -362,13 +349,10 @@ public class GaanaAudioSourceManager extends ExtendedAudioSourceManager {
     // ── Encode/Decode ────────────────────────────────────────────────────────
 
     @Override
-    public boolean isTrackEncodable(AudioTrack track) {
-        return true;
-    }
+    public boolean isTrackEncodable(AudioTrack track) { return true; }
 
     @Override
-    public void encodeTrack(AudioTrack track, DataOutput output) throws IOException {
-    }
+    public void encodeTrack(AudioTrack track, DataOutput output) throws IOException {}
 
     @Override
     public AudioTrack decodeTrack(AudioTrackInfo trackInfo, DataInput input) throws IOException {
