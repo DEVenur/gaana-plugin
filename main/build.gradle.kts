@@ -4,7 +4,7 @@ plugins {
 }
 
 project.group = "com.github.notdeltaxd"
-project.version = findProperty("version") as String 
+project.version = findProperty("version") as String
 val archivesBaseName = "gaana"
 
 tasks {
@@ -16,6 +16,7 @@ tasks {
 dependencies {
     compileOnly(libs.lavaplayer)
     compileOnly("org.jetbrains:annotations:24.1.0")
+    compileOnly("com.github.topi314.lavasearch:lavasearch:1.0.0")
     implementation(libs.logger)
     implementation(libs.commonsIo)
 
