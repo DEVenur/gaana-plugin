@@ -2,8 +2,8 @@ plugins {
     `java-library`
     `maven-publish`
     alias(libs.plugins.lavalink)
-    id("com.github.johnrengelman.shadow")
-    id("com.github.breadmoirai.github-release")
+    id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("com.github.breadmoirai.github-release") version "2.4.1"
 }
 
 val pluginVersion = findProperty("version") as String?
