@@ -1,52 +1,50 @@
 plugins {
-    java
-    alias(libs.plugins.lavalink) apply false
-    id("com.github.johnrengelman.shadow") version "8.1.1" apply false
-    id("com.github.breadmoirai.github-release") version "2.4.1" apply false
+    `java-library`
+    `maven-publish`
 }
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
-    }
-}
+project.group = "com.github.notdeltaxd"
+project.version = findProperty("version") as String 
+val archivesBaseName = "gaana"
 
-allprojects {
-    group = "com.github.notdeltaxd"
-
-    repositories {
-        mavenCentral()
-        mavenLocal()
-        maven("https://maven.lavalink.dev/releases")
-        maven("https://maven.lavalink.dev/snapshots")
-        maven("https://jitpack.io")
+tasks {
+    publish {
+        dependsOn(publishToMavenLocal)
     }
-
-    tasks.withType<Wrapper> {
-        gradleVersion = "8.4"
-        distributionType = Wrapper.DistributionType.BIN
-    }
-}
-
-subprojects {
-    apply(plugin = "java")
-    
-    java {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    
-    tasks.withType<JavaCompile> {
-        options.encoding = "UTF-8"
-        options.compilerArgs.add("-Xlint:unchecked")
-        options.compilerArgs.add("-Xlint:deprecation")
-    }
-}
-
-tasks.getByName<Test>("test") {
-    useJUnitPlatform()
 }
 
 dependencies {
-    implementation(kotlin("script-runtime"))
+    compileOnly(libs.lavaplayer)
+    compileOnly("org.jetbrains:annotations:24.1.0")
+    compileOnly("com.github.topi314.lavasearch:lavasearch:1.0.0")
+    implementation(libs.logger)
+    implementation(libs.commonsIo)
+
+    testImplementation(libs.lavaplayer)
+    testImplementation(libs.logger.impl)
+}
+
+val jar: Jar by tasks
+val build: Task by tasks
+val clean: Task by tasks
+
+val sourcesJar = task<Jar>("sourcesJar") {
+    archiveClassifier.set("sources")
+    from(sourceSets["main"].allJava)
+}
+
+build.apply {
+    dependsOn(jar)
+    dependsOn(sourcesJar)
+
+    jar.mustRunAfter(clean)
+    sourcesJar.mustRunAfter(jar)
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("main") {
+            from(components["java"])
+        }
+    }
 }
