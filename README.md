@@ -27,7 +27,10 @@ Replace `VERSION` with the latest release version (without the `v` prefix).
 ```yaml
 plugins:
   gaana:
-    searchLimit: 20  # Maximum search results (default: 20)
+    apiUrl: "http://localhost:8080" # visit https://github.com/ZingyTomato/GaanaPy
+    searchLimit: 20 # Maximum number of search results (default 20)
+    playlistTrackLimit: 50 # Maximum number of tracks in the playlist/album (default 50)
+    recommendationsTrackLimit: 10 # Maximum number of tracks by artist (default 10)
 ```
 
 ## Logging
