@@ -4,7 +4,7 @@ plugins {
 }
 
 project.group = "com.github.notdeltaxd"
-project.version = findProperty("version") as String 
+project.version = findProperty("version") as String
 val archivesBaseName = "gaana"
 
 tasks {
