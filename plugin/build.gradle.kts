@@ -28,6 +28,7 @@ lavalinkPlugin {
 
 dependencies {
     implementation(projects.main)
+    compileOnly("com.github.topi314.lavasearch:lavasearch:1.0.0")
 }
 
 val impl = project.configurations.implementation.get()
