@@ -8,7 +8,7 @@ A Lavalink plugin to play songs from [Gaana](https://gaana.com) - India's larges
 - HLS streaming with seeking support
 - Songs, albums, playlists, and artist pages
 - Search functionality
-
+- Compatible with LavaSearch
 ## Installation
 
 Add to your Lavalink's `application.yml`:
